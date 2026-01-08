@@ -1,0 +1,227 @@
+package com.example.hadashboard
+
+import android.content.*
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
+import android.os.*
+import android.util.Log
+import android.view.View
+import android.view.WindowInsets
+import android.view.WindowInsetsController
+import android.view.WindowManager
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.webkit.SslErrorHandler
+import android.net.http.SslError
+import android.widget.*
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var webView: WebView
+    private lateinit var setupLayout: View
+    private lateinit var prefs: SharedPreferences
+    private lateinit var nsdManager: NsdManager
+
+    private lateinit var editBroker: EditText
+    private lateinit var editUrl: EditText
+    private lateinit var editUser: EditText
+    private lateinit var editPass: EditText
+    private lateinit var editPort: EditText
+
+    private var discoveryListener: NsdManager.DiscoveryListener? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
+        }
+
+        setContentView(R.layout.activity_main)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        hideSystemUI()
+
+        prefs = getSharedPreferences("HADashboardPrefs", MODE_PRIVATE)
+        nsdManager = getSystemService(Context.NSD_SERVICE) as NsdManager
+
+        webView = findViewById(R.id.webView)
+        setupLayout = findViewById(R.id.setupLayout)
+        val splashView = findViewById<View>(R.id.splashLayout)
+
+        val btnSave = findViewById<Button>(R.id.btnSave)
+        val btnScan = findViewById<Button>(R.id.btnScan)
+
+        editBroker = findViewById(R.id.editBroker)
+        editUrl = findViewById(R.id.editUrl)
+        editUser = findViewById(R.id.editUser)
+        editPass = findViewById(R.id.editPass)
+        editPort = findViewById(R.id.editPort)
+
+        editBroker.setText(prefs.getString("broker", ""))
+        editUrl.setText(prefs.getString("url", ""))
+        editUser.setText(prefs.getString("user", ""))
+        editPass.setText(prefs.getString("pass", ""))
+        editPort.setText(prefs.getString("port", ""))
+
+        Handler(Looper.getMainLooper()).postDelayed({
+            splashView.animate().alpha(0f).setDuration(1000).withEndAction {
+                splashView.visibility = View.GONE
+            }
+        }, 2000)
+
+        btnScan.setOnClickListener {
+            Toast.makeText(this, "Scanning for Home Assistant...", Toast.LENGTH_SHORT).show()
+            startDiscovery()
+        }
+
+        if (!prefs.getString("broker", "").isNullOrEmpty()) {
+            startDashboard(prefs.getString("url", "https://google.com")!!)
+        }
+
+        btnSave.setOnClickListener {
+            prefs.edit()
+                .putString("broker", editBroker.text.toString())
+                .putString("url", editUrl.text.toString())
+                .putString("user", editUser.text.toString())
+                .putString("pass", editPass.text.toString())
+                .putString("port", editPort.text.toString())
+                .apply()
+            startDashboard(editUrl.text.toString())
+        }
+    }
+
+    private fun startDiscovery() {
+        stopDiscovery()
+        discoveryListener = object : NsdManager.DiscoveryListener {
+            override fun onDiscoveryStarted(regType: String) {}
+            override fun onServiceFound(serviceInfo: NsdServiceInfo) {
+                if (serviceInfo.serviceType.contains("home-assistant")) {
+                    nsdManager.resolveService(serviceInfo, object : NsdManager.ResolveListener {
+                        override fun onServiceResolved(resolvedInfo: NsdServiceInfo) {
+                            val host = resolvedInfo.host.hostAddress
+                            val port = resolvedInfo.port
+                            runOnUiThread {
+                                editUrl.setText("http://$host:$port")
+                                editBroker.setText(host)
+                                editPort.setText("1883")
+                                Toast.makeText(this@MainActivity, "Found HA! Auto-filled settings.", Toast.LENGTH_LONG).show()
+                                stopDiscovery()
+                            }
+                        }
+                        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
+                    })
+                }
+            }
+            override fun onServiceLost(serviceInfo: NsdServiceInfo) {}
+            override fun onDiscoveryStopped(regType: String) {}
+            override fun onStartDiscoveryFailed(serviceInfo: String, errorCode: Int) { stopDiscovery() }
+            override fun onStopDiscoveryFailed(serviceInfo: String, errorCode: Int) {}
+        }
+        nsdManager.discoverServices("_home-assistant._tcp.", NsdManager.PROTOCOL_DNS_SD, discoveryListener)
+    }
+
+    private fun stopDiscovery() {
+        discoveryListener?.let {
+            try { nsdManager.stopServiceDiscovery(it) } catch (e: Exception) {}
+            discoveryListener = null
+        }
+    }
+
+    private fun startDashboard(url: String) {
+        setupLayout.visibility = View.GONE
+        webView.visibility = View.VISIBLE
+        setupWebView()
+        webView.loadUrl(url)
+
+        val serviceIntent = Intent(this, MqttService::class.java)
+        ContextCompat.startForegroundService(this, serviceIntent)
+
+        val filter = IntentFilter("DASHBOARD_COMMAND")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(commandReceiver, filter, RECEIVER_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(commandReceiver, filter)
+        }
+    }
+
+    private fun setupWebView() {
+        webView.webViewClient = object : WebViewClient() {
+            override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
+                if (failingUrl != null && failingUrl.startsWith("http://")) {
+                    val newUrl = failingUrl.replace("http://", "https://")
+                    Log.d("WebView", "Retrying with HTTPS: $newUrl")
+                    Handler(Looper.getMainLooper()).postDelayed({ view?.loadUrl(newUrl) }, 500)
+                }
+            }
+
+            override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
+                handler?.proceed() // Trust local SSL certificates
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                if (url != null && url.startsWith("https://")) {
+                    prefs.edit().putString("url", url).apply()
+                    editUrl.setText(url)
+                }
+            }
+        }
+
+        val s = webView.settings
+        s.javaScriptEnabled = true
+        s.domStorageEnabled = true
+        s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        s.useWideViewPort = true
+        s.loadWithOverviewMode = true
+    }
+
+    private fun hideSystemUI() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(false)
+            window.insetsController?.let {
+                it.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+                it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_FULLSCREEN)
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) hideSystemUI()
+    }
+
+    private val commandReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.getStringExtra("action")) {
+                "RELOAD" -> webView.reload()
+                "SCREEN_ON" -> {
+                    hideSystemUI()
+                    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        stopDiscovery()
+        try { unregisterReceiver(commandReceiver) } catch (e: Exception) {}
+    }
+}
