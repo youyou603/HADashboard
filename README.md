@@ -2,6 +2,9 @@
 
 A minimal, high-performance Android Kiosk for Home Assistant dashboards.
 
+![Screenshot_20260108_172352_HADashboard](https://github.com/user-attachments/assets/00f4f198-3d48-44de-964a-6a2030161573)
+
+
 ## Features
 - **Auto-Discovery:** Automatically finds your Home Assistant instance on the local network.
 - **MQTT Integration:** Connects to your MQTT Broker for remote hardware control.
