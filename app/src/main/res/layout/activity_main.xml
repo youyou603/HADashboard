@@ -87,6 +87,16 @@
                 android:layout_marginBottom="12dp" />
 
             <EditText
+                android:id="@+id/editDeviceId"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Unique Device Name (e.g. kitchen_tablet)"
+                android:backgroundTint="#1FBEF2"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#666666"
+                android:layout_marginBottom="8dp"/>
+
+            <EditText
                 android:id="@+id/editBroker"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

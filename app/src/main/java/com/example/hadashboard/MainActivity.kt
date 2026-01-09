@@ -1,18 +1,19 @@
 package com.example.hadashboard
 
+import android.app.KeyguardManager
+import android.app.admin.DevicePolicyManager
 import android.content.*
+import android.net.Uri
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.*
+import android.provider.Settings
 import android.util.Log
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.webkit.SslErrorHandler
+import android.webkit.*
 import android.net.http.SslError
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
@@ -30,8 +31,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var editUser: EditText
     private lateinit var editPass: EditText
     private lateinit var editPort: EditText
+    private lateinit var editDeviceId: EditText
 
     private var discoveryListener: NsdManager.DiscoveryListener? = null
+    private val ADMIN_INTENT_REQUEST_CODE = 101
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -42,12 +45,15 @@ class MainActivity : AppCompatActivity() {
         } else {
             @Suppress("DEPRECATION")
             window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD)
         }
 
         setContentView(R.layout.activity_main)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         hideSystemUI()
+
+        checkAndRequestPermissions()
 
         prefs = getSharedPreferences("HADashboardPrefs", MODE_PRIVATE)
         nsdManager = getSystemService(Context.NSD_SERVICE) as NsdManager
@@ -64,12 +70,14 @@ class MainActivity : AppCompatActivity() {
         editUser = findViewById(R.id.editUser)
         editPass = findViewById(R.id.editPass)
         editPort = findViewById(R.id.editPort)
+        editDeviceId = findViewById(R.id.editDeviceId)
 
         editBroker.setText(prefs.getString("broker", ""))
         editUrl.setText(prefs.getString("url", ""))
         editUser.setText(prefs.getString("user", ""))
         editPass.setText(prefs.getString("pass", ""))
         editPort.setText(prefs.getString("port", ""))
+        editDeviceId.setText(prefs.getString("unique_device_id", ""))
 
         Handler(Looper.getMainLooper()).postDelayed({
             splashView.animate().alpha(0f).setDuration(1000).withEndAction {
@@ -82,19 +90,58 @@ class MainActivity : AppCompatActivity() {
             startDiscovery()
         }
 
-        if (!prefs.getString("broker", "").isNullOrEmpty()) {
+        if (!prefs.getString("broker", "").isNullOrEmpty() && !prefs.getString("unique_device_id", "").isNullOrEmpty()) {
             startDashboard(prefs.getString("url", "https://google.com")!!)
         }
 
         btnSave.setOnClickListener {
+            val deviceId = editDeviceId.text.toString().trim()
+            if (deviceId.isEmpty()) {
+                Toast.makeText(this, "Please enter a Device ID first", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
             prefs.edit()
+                .putString("unique_device_id", deviceId)
                 .putString("broker", editBroker.text.toString())
                 .putString("url", editUrl.text.toString())
                 .putString("user", editUser.text.toString())
                 .putString("pass", editPass.text.toString())
                 .putString("port", editPort.text.toString())
                 .apply()
+
             startDashboard(editUrl.text.toString())
+        }
+    }
+
+    private fun checkAndRequestPermissions() {
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val adminComponent = ComponentName(this, MyDeviceAdminReceiver::class.java)
+
+        if (!dpm.isAdminActive(adminComponent)) {
+            val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+            intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
+            intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Required to lock the screen via Home Assistant.")
+            startActivityForResult(intent, ADMIN_INTENT_REQUEST_CODE)
+        } else {
+            checkBrightnessPermission()
+        }
+    }
+
+    private fun checkBrightnessPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (!Settings.System.canWrite(this)) {
+                val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS)
+                intent.data = Uri.parse("package:$packageName")
+                startActivity(intent)
+            }
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == ADMIN_INTENT_REQUEST_CODE) {
+            checkBrightnessPermission()
         }
     }
 
@@ -106,13 +153,12 @@ class MainActivity : AppCompatActivity() {
                 if (serviceInfo.serviceType.contains("home-assistant")) {
                     nsdManager.resolveService(serviceInfo, object : NsdManager.ResolveListener {
                         override fun onServiceResolved(resolvedInfo: NsdServiceInfo) {
-                            val host = resolvedInfo.host.hostAddress
-                            val port = resolvedInfo.port
                             runOnUiThread {
-                                editUrl.setText("http://$host:$port")
+                                val host = resolvedInfo.host.hostAddress
+                                editUrl.setText("http://$host:${resolvedInfo.port}")
                                 editBroker.setText(host)
                                 editPort.setText("1883")
-                                Toast.makeText(this@MainActivity, "Found HA! Auto-filled settings.", Toast.LENGTH_LONG).show()
+                                if(editDeviceId.text.isEmpty()) editDeviceId.setText("tablet_kiosk")
                                 stopDiscovery()
                             }
                         }
@@ -155,33 +201,35 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupWebView() {
         webView.webViewClient = object : WebViewClient() {
-            override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
-                if (failingUrl != null && failingUrl.startsWith("http://")) {
-                    val newUrl = failingUrl.replace("http://", "https://")
-                    Log.d("WebView", "Retrying with HTTPS: $newUrl")
-                    Handler(Looper.getMainLooper()).postDelayed({ view?.loadUrl(newUrl) }, 500)
+            // FIX 1: AUTO UPGRADE HTTP TO HTTPS ON FAILURE
+            override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                val failingUrl = request?.url.toString()
+                if (failingUrl.startsWith("http://")) {
+                    val httpsUrl = failingUrl.replace("http://", "https://")
+                    view?.loadUrl(httpsUrl)
                 }
             }
 
             override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
-                handler?.proceed() // Trust local SSL certificates
+                handler?.proceed()
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 if (url != null && url.startsWith("https://")) {
                     prefs.edit().putString("url", url).apply()
-                    editUrl.setText(url)
                 }
             }
         }
-
         val s = webView.settings
         s.javaScriptEnabled = true
         s.domStorageEnabled = true
+        s.databaseEnabled = true
         s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         s.useWideViewPort = true
         s.loadWithOverviewMode = true
+        // Added UserAgent fix for HA Card compatibility
+        s.userAgentString = s.userAgentString.replace("wv", "")
     }
 
     private fun hideSystemUI() {
@@ -212,8 +260,20 @@ class MainActivity : AppCompatActivity() {
             when (intent?.getStringExtra("action")) {
                 "RELOAD" -> webView.reload()
                 "SCREEN_ON" -> {
+                    // FIX 2: RE-APPLY WAKE LOGIC
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                        setShowWhenLocked(true)
+                        setTurnScreenOn(true)
+                        val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+                        km.requestDismissKeyguard(this@MainActivity, null)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        window.addFlags(WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+                                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
                     hideSystemUI()
-                    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 }
             }
         }
