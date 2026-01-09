@@ -28,7 +28,7 @@ For hardware controls to work, you must manually grant these permissions in Andr
 * **Device Administrator:** Required for the **Screen Lock** feature.
   * *Settings > Security > Device Admin Apps > Enable HADashboard*
 * **Modify System Settings:** Required for **Brightness Control**.
-  * *Settings > Apps > [App Name] > Advanced > Modify system settings > Allow*
+  * *Settings > Apps > HADashboard > Advanced > Modify system settings > Allow*
 * **Display Over Other Apps:** Ensures the app remains in the foreground.
   * *Settings > Apps > Special App Access > Display over other apps > Enable*
 
