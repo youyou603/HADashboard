@@ -201,23 +201,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupWebView() {
         webView.webViewClient = object : WebViewClient() {
-            // FIX 1: AUTO UPGRADE HTTP TO HTTPS ON FAILURE
-            override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
-                val failingUrl = request?.url.toString()
-                if (failingUrl.startsWith("http://")) {
-                    val httpsUrl = failingUrl.replace("http://", "https://")
-                    view?.loadUrl(httpsUrl)
-                }
-            }
 
+            // 1. Handle SSL/HTTPS certificates (Crucial for Home Assistant)
             override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
-                handler?.proceed()
+                handler?.proceed() // Trust the certificate and load the page
             }
 
-            override fun onPageFinished(view: WebView?, url: String?) {
-                super.onPageFinished(view, url)
-                if (url != null && url.startsWith("https://")) {
-                    prefs.edit().putString("url", url).apply()
+            // 2. Only upgrade to HTTPS if HTTP actually fails to connect
+            override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                // Only trigger this if the main page fails, not just a random image or script
+                if (request?.isForMainFrame == true) {
+                    val failingUrl = request.url.toString()
+                    if (failingUrl.startsWith("http://")) {
+                        Log.w("WEBVIEW", "HTTP Failed, trying HTTPS fallback...")
+                        val httpsUrl = failingUrl.replace("http://", "https://")
+                        view?.loadUrl(httpsUrl)
+                    }
                 }
             }
         }
