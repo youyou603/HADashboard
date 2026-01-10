@@ -3,6 +3,7 @@ package com.example.hadashboard
 import android.app.*
 import android.app.admin.DevicePolicyManager
 import android.content.*
+import android.content.pm.ServiceInfo
 import android.os.*
 import android.provider.Settings
 import android.util.Log
@@ -21,6 +22,15 @@ class MqttService : Service() {
     private var deviceId: String = "hadashboard_tablet"
     private lateinit var prefs: SharedPreferences
 
+    // --- ADDED: Get dynamic version name ---
+    private val appVersion: String by lazy {
+        try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0"
+        } catch (e: Exception) {
+            "1.0"
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -31,13 +41,29 @@ class MqttService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (prefs.getBoolean("use_esphome", false)) {
+            Log.d(TAG, "ESPHome mode is active. Shutting down MQTT Service.")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         deviceId = prefs.getString("unique_device_id", "hadashboard_tablet") ?: "hadashboard_tablet"
 
         createNotificationChannel()
-        startForeground(1, NotificationCompat.Builder(this, "mqtt_channel")
+
+        // --- UPDATED: SDK 34+ Foreground Service Logic ---
+        val notification = NotificationCompat.Builder(this, "mqtt_channel")
             .setContentTitle("HADashboard Active")
-            .setContentText("Connected as: $deviceId")
-            .setSmallIcon(android.R.drawable.ic_dialog_info).build())
+            .setContentText("Connected via MQTT as: $deviceId")
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(1, notification)
+        }
 
         stopMqtt()
         setupMqtt()
@@ -48,6 +74,8 @@ class MqttService : Service() {
 
     private fun setupMqtt() {
         val brokerIp = prefs.getString("broker", "") ?: return
+        if (brokerIp.isEmpty()) return
+
         val user = prefs.getString("user", "")
         val pass = prefs.getString("pass", "")
         val serverUri = "tcp://$brokerIp:1883"
@@ -66,16 +94,11 @@ class MqttService : Service() {
 
                 mqttClient?.setCallback(object : MqttCallbackExtended {
                     override fun connectComplete(reconnect: Boolean, serverURI: String?) {
+                        Log.d(TAG, "Connected to Broker")
                         mqttClient?.subscribe("hadashboard/$deviceId/control", 1)
 
-                        // PERSISTENT GUARD: Check SharedPreferences so we don't spam HA
-                        val alreadyDiscovered = prefs.getBoolean("mqtt_discovery_done_$deviceId", false)
-                        if (!alreadyDiscovered) {
-                            sendDiscovery()
-                            prefs.edit().putBoolean("mqtt_discovery_done_$deviceId", true).apply()
-                            Log.d(TAG, "First time discovery sent and saved.")
-                        }
-
+                        // Force discovery update if version changed or first time
+                        sendDiscovery()
                         reportInstantStatus()
                     }
                     override fun messageArrived(topic: String?, message: MqttMessage?) {
@@ -99,7 +122,8 @@ class MqttService : Service() {
             put("identifiers", arrayOf(deviceId))
             put("name", deviceId.replace("_", " ").uppercase())
             put("model", Build.MODEL)
-            put("sw_version", "1.6")
+            put("sw_version", appVersion) // --- FIXED: Uses dynamic version ---
+            put("manufacturer", "HADashboard")
         }
 
         fun discover(component: String, name: String, key: String, extra: JSONObject? = null) {
@@ -114,7 +138,6 @@ class MqttService : Service() {
                 }
                 extra?.keys()?.forEach { put(it, extra.get(it)) }
             }
-            // Discovery MUST be retained = true so HA sees it whenever it reboots
             publishSafe("homeassistant/$component/$deviceId/$key/config", config.toString(), true)
         }
 

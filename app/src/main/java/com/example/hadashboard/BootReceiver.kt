@@ -3,20 +3,31 @@ package com.example.hadashboard
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.Build
+import androidx.core.content.ContextCompat
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED ||
-            intent.action == Intent.ACTION_LOCKED_BOOT_COMPLETED) {
+        if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
+            val prefs = context.getSharedPreferences("HADashboardPrefs", Context.MODE_PRIVATE)
 
-            val serviceIntent = Intent(context, MqttService::class.java)
+            if (prefs.getBoolean("setup_complete", false)) {
+                val useEsphome = prefs.getBoolean("use_esphome", false)
 
-            // On Android 8.0+ we must use startForegroundService
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(serviceIntent)
-            } else {
-                context.startService(serviceIntent)
+                if (useEsphome) {
+                    // Start ESPHome API background service
+                    val serviceIntent = Intent(context, EsphomeApiService::class.java)
+                    context.startService(serviceIntent)
+                } else {
+                    // Start MQTT background service
+                    val serviceIntent = Intent(context, MqttService::class.java)
+                    ContextCompat.startForegroundService(context, serviceIntent)
+                }
+
+                // Launch the Dashboard UI
+                val activityIntent = Intent(context, MainActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(activityIntent)
             }
         }
     }

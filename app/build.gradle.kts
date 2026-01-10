@@ -1,16 +1,19 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.protobuf)
 }
 
 android {
     namespace = "com.example.hadashboard"
-    compileSdk = 35
+    // Compile with 36 to satisfy the new AndroidX libraries
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.example.hadashboard"
+        // minSdk 24 is perfect for Android 8 (SDK 26)
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0"
 
@@ -26,27 +29,57 @@ android {
             )
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+
     kotlinOptions {
         jvmTarget = "11"
+    }
+
+    // We use java.srcDirs to safely point to the proto folder
+    sourceSets {
+        getByName("main") {
+            java.srcDirs("src/main/proto")
+        }
     }
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.15.0")
-    implementation("androidx.appcompat:appcompat:1.7.0")
-    implementation("com.google.android.material:material:1.12.0")
-    implementation("androidx.activity:activity:1.9.3")
-    implementation("androidx.constraintlayout:constraintlayout:2.2.0")
+    // AndroidX Libraries
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.material)
+    implementation(libs.androidx.activity)
+    implementation(libs.androidx.constraintlayout)
 
-    // OFFICIAL MQTT LIBRARIES (No "hannesa" involved)
-    implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
-    implementation("androidx.legacy:legacy-support-v4:1.0.0")
+    // MQTT FIX: Added the library to fix 'Unresolved reference eclipse'
+    implementation(libs.mqtt.client)
 
-    testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.2.1")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    // PROTOBUF FIXES:
+    // 1. Provides descriptor.proto for the compiler
+    protobuf("com.google.protobuf:protobuf-java:3.25.1")
+    // 2. Runtime libraries for your app
+    implementation(libs.protobuf.kotlin.lite)
+    implementation(libs.protobuf.javalite)
+
+    testImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.26.1"
+    }
+    generateProtoTasks {
+        all().forEach { task ->
+            task.builtins {
+                create("java") { option("lite") }
+                create("kotlin") { option("lite") }
+            }
+        }
+    }
 }

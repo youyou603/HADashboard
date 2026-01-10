@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#121212"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Setup HADashboard"
+            android:textColor="#FFFFFF"
+            android:textSize="28sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="32dp"/>
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/connectionToggle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Use MQTT instead of ESPHome"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:checked="false"
+            android:layout_marginBottom="24dp"
+            app:thumbTint="#1FBEF2" />
+
+        <EditText
+            android:id="@+id/editUrl"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Home Assistant URL"
+            android:backgroundTint="#1FBEF2"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#444444" />
+
+        <Button
+            android:id="@+id/btnScan"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="🔍 Auto-scan for HA"
+            android:textColor="#1FBEF2"
+            android:layout_gravity="end"/>
+
+        <EditText
+            android:id="@+id/editDeviceId"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Unique Device Name"
+            android:backgroundTint="#1FBEF2"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#444444"
+            android:layout_marginBottom="20dp"/>
+
+        <LinearLayout
+            android:id="@+id/esphomeInfoGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:visibility="visible"
+            android:background="#1A1A1A">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="ESPHome API Key (Copy to HA)"
+                android:textColor="#1FBEF2"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/esphomeApiKey"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="GENERATING..."
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:fontFamily="monospace"
+                android:textIsSelectable="true" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/mqttInputGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <EditText
+                android:id="@+id/editBroker"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Broker IP"
+                android:backgroundTint="#1FBEF2"
+                android:textColor="#FFFFFF" />
+
+            <EditText
+                android:id="@+id/editPort"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Port (1883)"
+                android:inputType="number"
+                android:backgroundTint="#1FBEF2"
+                android:textColor="#FFFFFF" />
+
+            <EditText
+                android:id="@+id/editUser"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="MQTT User"
+                android:backgroundTint="#1FBEF2"
+                android:textColor="#FFFFFF" />
+
+            <EditText
+                android:id="@+id/editPass"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="MQTT Password"
+                android:inputType="textPassword"
+                android:backgroundTint="#1FBEF2"
+                android:textColor="#FFFFFF" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/saveButton"
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:layout_marginTop="32dp"
+            android:backgroundTint="#1FBEF2"
+            android:text="SAVE AND CONNECT"
+            android:textColor="#121212"
+            android:textStyle="bold" />
+
+    </LinearLayout>
+</ScrollView>

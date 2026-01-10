@@ -10,6 +10,13 @@ material = "1.13.0"
 activity = "1.12.2"
 constraintlayout = "2.2.1"
 
+# Added for ESPHome/Protobuf
+protobufPlugin = "0.9.4"
+protobufJava = "4.26.1"
+
+# Added for MQTT
+mqttv3 = "1.2.5"
+
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
@@ -20,7 +27,15 @@ material = { group = "com.google.android.material", name = "material", version.r
 androidx-activity = { group = "androidx.activity", name = "activity", version.ref = "activity" }
 androidx-constraintlayout = { group = "androidx.constraintlayout", name = "constraintlayout", version.ref = "constraintlayout" }
 
+# Protobuf Libraries (for ESPHome)
+protobuf-kotlin-lite = { group = "com.google.protobuf", name = "protobuf-kotlin-lite", version.ref = "protobufJava" }
+protobuf-javalite = { group = "com.google.protobuf", name = "protobuf-javalite", version.ref = "protobufJava" }
+
+# MQTT Library (for MqttService)
+mqtt-client = { group = "org.eclipse.paho", name = "org.eclipse.paho.client.mqttv3", version.ref = "mqttv3" }
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
-
+# Added for ESPHome
+protobuf = { id = "com.google.protobuf", version.ref = "protobufPlugin" }

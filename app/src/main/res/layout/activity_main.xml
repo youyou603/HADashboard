@@ -10,151 +10,6 @@
         android:layout_height="match_parent"
         android:visibility="gone" />
 
-    <ScrollView
-        android:id="@+id/setupLayout"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="#121212">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="32dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_horizontal"
-                android:orientation="vertical"
-                android:layout_marginBottom="40dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="HADashboard Setup"
-                    android:textColor="#FFFFFF"
-                    android:textSize="32sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="Welcome! Configure your settings below."
-                    android:textColor="#AAAAAA"
-                    android:textSize="16sp" />
-            </LinearLayout>
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Dashboard Connection"
-                android:textColor="#FFFFFF"
-                android:textSize="18sp"
-                android:textStyle="bold"
-                android:layout_marginBottom="12dp" />
-
-            <EditText
-                android:id="@+id/editUrl"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="Home Assistant URL"
-                android:backgroundTint="#1FBEF2"
-                android:textColor="#FFFFFF"
-                android:textColorHint="#666666" />
-
-            <Button
-                android:id="@+id/btnScan"
-                style="?android:attr/borderlessButtonStyle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="start"
-                android:text="🔍 AUTO-SCAN FOR HA"
-                android:textColor="#1FBEF2"
-                android:textSize="12sp"
-                android:paddingStart="0dp"
-                android:layout_marginBottom="24dp"/>
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="MQTT Broker Settings"
-                android:textColor="#FFFFFF"
-                android:textSize="18sp"
-                android:textStyle="bold"
-                android:layout_marginTop="16dp"
-                android:layout_marginBottom="12dp" />
-
-            <EditText
-                android:id="@+id/editDeviceId"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="Unique Device Name (e.g. kitchen_tablet)"
-                android:backgroundTint="#1FBEF2"
-                android:textColor="#FFFFFF"
-                android:textColorHint="#666666"
-                android:layout_marginBottom="8dp"/>
-
-            <EditText
-                android:id="@+id/editBroker"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="Broker IP (e.g. 192.168.1.50)"
-                android:backgroundTint="#1FBEF2"
-                android:textColor="#FFFFFF"
-                android:textColorHint="#666666" />
-
-            <EditText
-                android:id="@+id/editPort"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="Port (Default: 1883)"
-                android:backgroundTint="#1FBEF2"
-                android:inputType="number"
-                android:textColor="#FFFFFF"
-                android:textColorHint="#666666" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:weightSum="2">
-
-                <EditText
-                    android:id="@+id/editUser"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:hint="Username"
-                    android:backgroundTint="#1FBEF2"
-                    android:textColor="#FFFFFF"
-                    android:textColorHint="#666666" />
-
-                <EditText
-                    android:id="@+id/editPass"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:hint="Password"
-                    android:backgroundTint="#1FBEF2"
-                    android:inputType="textPassword"
-                    android:textColor="#FFFFFF"
-                    android:textColorHint="#666666" />
-            </LinearLayout>
-
-            <Button
-                android:id="@+id/btnSave"
-                android:layout_width="match_parent"
-                android:layout_height="60dp"
-                android:text="SAVE AND CONNECT"
-                android:backgroundTint="#1FBEF2"
-                android:textColor="#121212"
-                android:textStyle="bold"
-                android:layout_marginTop="40dp" />
-        </LinearLayout>
-    </ScrollView>
-
     <RelativeLayout
         android:id="@+id/splashLayout"
         android:layout_width="match_parent"
@@ -186,7 +41,12 @@
                 android:textColor="#888888"
                 android:textSize="16sp"
                 android:letterSpacing="0.1" />
+
+            <ProgressBar
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginTop="40dp"
+                android:indeterminateTint="#1FBEF2" />
         </LinearLayout>
     </RelativeLayout>
-
 </FrameLayout>

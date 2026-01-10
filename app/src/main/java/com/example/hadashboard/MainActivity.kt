@@ -4,8 +4,6 @@ import android.app.KeyguardManager
 import android.app.admin.DevicePolicyManager
 import android.content.*
 import android.net.Uri
-import android.net.nsd.NsdManager
-import android.net.nsd.NsdServiceInfo
 import android.os.*
 import android.provider.Settings
 import android.util.Log
@@ -22,23 +20,24 @@ import androidx.core.content.ContextCompat
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
-    private lateinit var setupLayout: View
     private lateinit var prefs: SharedPreferences
-    private lateinit var nsdManager: NsdManager
-
-    private lateinit var editBroker: EditText
-    private lateinit var editUrl: EditText
-    private lateinit var editUser: EditText
-    private lateinit var editPass: EditText
-    private lateinit var editPort: EditText
-    private lateinit var editDeviceId: EditText
-
-    private var discoveryListener: NsdManager.DiscoveryListener? = null
+    private var esphomeDiscovery: EsphomeDiscovery? = null
     private val ADMIN_INTENT_REQUEST_CODE = 101
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        prefs = getSharedPreferences("HADashboardPrefs", MODE_PRIVATE)
+
+        // Ensure we go to setup if not configured
+        if (!prefs.getBoolean("setup_complete", false)) {
+            val intent = Intent(this, SetupActivity::class.java)
+            startActivity(intent)
+            finish()
+            return
+        }
+
+        // Standard setup for Kiosk mode / Wake screen
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
@@ -55,29 +54,16 @@ class MainActivity : AppCompatActivity() {
 
         checkAndRequestPermissions()
 
-        prefs = getSharedPreferences("HADashboardPrefs", MODE_PRIVATE)
-        nsdManager = getSystemService(Context.NSD_SERVICE) as NsdManager
-
         webView = findViewById(R.id.webView)
-        setupLayout = findViewById(R.id.setupLayout)
         val splashView = findViewById<View>(R.id.splashLayout)
 
-        val btnSave = findViewById<Button>(R.id.btnSave)
-        val btnScan = findViewById<Button>(R.id.btnScan)
-
-        editBroker = findViewById(R.id.editBroker)
-        editUrl = findViewById(R.id.editUrl)
-        editUser = findViewById(R.id.editUser)
-        editPass = findViewById(R.id.editPass)
-        editPort = findViewById(R.id.editPort)
-        editDeviceId = findViewById(R.id.editDeviceId)
-
-        editBroker.setText(prefs.getString("broker", ""))
-        editUrl.setText(prefs.getString("url", ""))
-        editUser.setText(prefs.getString("user", ""))
-        editPass.setText(prefs.getString("pass", ""))
-        editPort.setText(prefs.getString("port", ""))
-        editDeviceId.setText(prefs.getString("unique_device_id", ""))
+        // Reset Setup on long click of the splash screen
+        splashView.setOnLongClickListener {
+            prefs.edit().putBoolean("setup_complete", false).apply()
+            startActivity(Intent(this, SetupActivity::class.java))
+            finish()
+            true
+        }
 
         Handler(Looper.getMainLooper()).postDelayed({
             splashView.animate().alpha(0f).setDuration(1000).withEndAction {
@@ -85,110 +71,33 @@ class MainActivity : AppCompatActivity() {
             }
         }, 2000)
 
-        btnScan.setOnClickListener {
-            Toast.makeText(this, "Scanning for Home Assistant...", Toast.LENGTH_SHORT).show()
-            startDiscovery()
-        }
-
-        if (!prefs.getString("broker", "").isNullOrEmpty() && !prefs.getString("unique_device_id", "").isNullOrEmpty()) {
-            startDashboard(prefs.getString("url", "https://google.com")!!)
-        }
-
-        btnSave.setOnClickListener {
-            val deviceId = editDeviceId.text.toString().trim()
-            if (deviceId.isEmpty()) {
-                Toast.makeText(this, "Please enter a Device ID first", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-
-            prefs.edit()
-                .putString("unique_device_id", deviceId)
-                .putString("broker", editBroker.text.toString())
-                .putString("url", editUrl.text.toString())
-                .putString("user", editUser.text.toString())
-                .putString("pass", editPass.text.toString())
-                .putString("port", editPort.text.toString())
-                .apply()
-
-            startDashboard(editUrl.text.toString())
-        }
-    }
-
-    private fun checkAndRequestPermissions() {
-        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-        val adminComponent = ComponentName(this, MyDeviceAdminReceiver::class.java)
-
-        if (!dpm.isAdminActive(adminComponent)) {
-            val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
-            intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
-            intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Required to lock the screen via Home Assistant.")
-            startActivityForResult(intent, ADMIN_INTENT_REQUEST_CODE)
-        } else {
-            checkBrightnessPermission()
-        }
-    }
-
-    private fun checkBrightnessPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (!Settings.System.canWrite(this)) {
-                val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS)
-                intent.data = Uri.parse("package:$packageName")
-                startActivity(intent)
-            }
-        }
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == ADMIN_INTENT_REQUEST_CODE) {
-            checkBrightnessPermission()
-        }
-    }
-
-    private fun startDiscovery() {
-        stopDiscovery()
-        discoveryListener = object : NsdManager.DiscoveryListener {
-            override fun onDiscoveryStarted(regType: String) {}
-            override fun onServiceFound(serviceInfo: NsdServiceInfo) {
-                if (serviceInfo.serviceType.contains("home-assistant")) {
-                    nsdManager.resolveService(serviceInfo, object : NsdManager.ResolveListener {
-                        override fun onServiceResolved(resolvedInfo: NsdServiceInfo) {
-                            runOnUiThread {
-                                val host = resolvedInfo.host.hostAddress
-                                editUrl.setText("http://$host:${resolvedInfo.port}")
-                                editBroker.setText(host)
-                                editPort.setText("1883")
-                                if(editDeviceId.text.isEmpty()) editDeviceId.setText("tablet_kiosk")
-                                stopDiscovery()
-                            }
-                        }
-                        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
-                    })
-                }
-            }
-            override fun onServiceLost(serviceInfo: NsdServiceInfo) {}
-            override fun onDiscoveryStopped(regType: String) {}
-            override fun onStartDiscoveryFailed(serviceInfo: String, errorCode: Int) { stopDiscovery() }
-            override fun onStopDiscoveryFailed(serviceInfo: String, errorCode: Int) {}
-        }
-        nsdManager.discoverServices("_home-assistant._tcp.", NsdManager.PROTOCOL_DNS_SD, discoveryListener)
-    }
-
-    private fun stopDiscovery() {
-        discoveryListener?.let {
-            try { nsdManager.stopServiceDiscovery(it) } catch (e: Exception) {}
-            discoveryListener = null
-        }
+        val url = prefs.getString("url", "http://homeassistant.local:8123")!!
+        startDashboard(url)
     }
 
     private fun startDashboard(url: String) {
-        setupLayout.visibility = View.GONE
         webView.visibility = View.VISIBLE
         setupWebView()
         webView.loadUrl(url)
 
-        val serviceIntent = Intent(this, MqttService::class.java)
-        ContextCompat.startForegroundService(this, serviceIntent)
+        // UPDATED: Default is TRUE because Toggle OFF in Setup = ESPHome
+        val useEsphome = prefs.getBoolean("use_esphome", true)
+
+        if (useEsphome) {
+            Log.d("DASHBOARD", "Starting ESPHome Discovery & API Engine...")
+
+            // Start mDNS Discovery so it shows up in HA
+            esphomeDiscovery = EsphomeDiscovery(this)
+            esphomeDiscovery?.broadcastDevice()
+
+            // Start the ESPHome API Service
+            val apiIntent = Intent(this, EsphomeApiService::class.java)
+            startService(apiIntent)
+        } else {
+            Log.d("DASHBOARD", "Starting MQTT Service...")
+            val serviceIntent = Intent(this, MqttService::class.java)
+            ContextCompat.startForegroundService(this, serviceIntent)
+        }
 
         val filter = IntentFilter("DASHBOARD_COMMAND")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -201,34 +110,32 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupWebView() {
         webView.webViewClient = object : WebViewClient() {
-
-            // 1. Handle SSL/HTTPS certificates (Crucial for Home Assistant)
             override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
-                handler?.proceed() // Trust the certificate and load the page
+                handler?.proceed() // Allow local self-signed certs
             }
-
-            // 2. Only upgrade to HTTPS if HTTP actually fails to connect
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
-                // Only trigger this if the main page fails, not just a random image or script
                 if (request?.isForMainFrame == true) {
                     val failingUrl = request.url.toString()
                     if (failingUrl.startsWith("http://")) {
-                        Log.w("WEBVIEW", "HTTP Failed, trying HTTPS fallback...")
                         val httpsUrl = failingUrl.replace("http://", "https://")
                         view?.loadUrl(httpsUrl)
                     }
                 }
             }
         }
-        val s = webView.settings
-        s.javaScriptEnabled = true
-        s.domStorageEnabled = true
-        s.databaseEnabled = true
-        s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-        s.useWideViewPort = true
-        s.loadWithOverviewMode = true
-        // Added UserAgent fix for HA Card compatibility
-        s.userAgentString = s.userAgentString.replace("wv", "")
+
+        webView.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            databaseEnabled = true
+            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            useWideViewPort = true
+            loadWithOverviewMode = true
+            // Clean up User Agent to prevent HA login issues
+            userAgentString = userAgentString.replace("wv", "")
+        }
+
+        webView.setBackgroundColor(0)
     }
 
     private fun hideSystemUI() {
@@ -256,31 +163,94 @@ class MainActivity : AppCompatActivity() {
 
     private val commandReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            when (intent?.getStringExtra("action")) {
-                "RELOAD" -> webView.reload()
-                "SCREEN_ON" -> {
-                    // FIX 2: RE-APPLY WAKE LOGIC
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-                        setShowWhenLocked(true)
-                        setTurnScreenOn(true)
-                        val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
-                        km.requestDismissKeyguard(this@MainActivity, null)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        window.addFlags(WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
-                                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-                                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    }
-                    hideSystemUI()
+            val action = intent?.getStringExtra("action")
+            Log.d("MainActivity", "Received Action: $action")
+
+            when (action) {
+                // Supports both ESPHome ("RELOAD_URL") and MQTT ("RELOAD") formats
+                "RELOAD_URL", "RELOAD" -> {
+                    Log.d("MainActivity", "Reloading Dashboard...")
+                    webView.reload()
+                }
+                "SCREEN_ON" -> turnScreenOn()
+                "SCREEN_OFF" -> turnScreenOff()
+                "SET_BRIGHTNESS" -> {
+                    val value = intent.getIntExtra("value", 128)
+                    setSystemBrightness(value)
                 }
             }
         }
     }
 
+    private fun setSystemBrightness(value: Int) {
+        if (Settings.System.canWrite(this)) {
+            try {
+                Settings.System.putInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, value)
+                val lp = window.attributes
+                lp.screenBrightness = value / 255.0f
+                window.attributes = lp
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Brightness Error: ${e.message}")
+            }
+        }
+    }
+
+    private fun turnScreenOn() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+            val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+            km.requestDismissKeyguard(this@MainActivity, null)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        hideSystemUI()
+    }
+
+    private fun turnScreenOff() {
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val adminComponent = ComponentName(this, MyDeviceAdminReceiver::class.java)
+        if (dpm.isAdminActive(adminComponent)) {
+            try {
+                dpm.lockNow()
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Lock failed: ${e.message}")
+            }
+        } else {
+            Toast.makeText(this, "Admin permission required to lock screen", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     override fun onDestroy() {
-        super.onDestroy()
-        stopDiscovery()
+        // Stop discovery so it doesn't linger in HA sidebar after app closes
+        esphomeDiscovery?.stopBroadcast()
+        stopService(Intent(this, EsphomeApiService::class.java))
+        stopService(Intent(this, MqttService::class.java))
         try { unregisterReceiver(commandReceiver) } catch (e: Exception) {}
+        super.onDestroy()
+    }
+
+    private fun checkAndRequestPermissions() {
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val adminComponent = ComponentName(this, MyDeviceAdminReceiver::class.java)
+        if (!dpm.isAdminActive(adminComponent)) {
+            val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+            intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
+            intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Dashboard needs this to turn off the screen.")
+            startActivityForResult(intent, ADMIN_INTENT_REQUEST_CODE)
+        }
+        checkBrightnessPermission()
+    }
+
+    private fun checkBrightnessPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.System.canWrite(this)) {
+            val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS)
+            intent.data = Uri.parse("package:$packageName")
+            startActivity(intent)
+        }
     }
 }
