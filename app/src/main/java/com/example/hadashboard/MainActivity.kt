@@ -14,6 +14,7 @@ import android.view.WindowManager
 import android.webkit.*
 import android.net.http.SslError
 import android.widget.*
+import androidx.activity.OnBackPressedCallback // Added this import
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 
@@ -29,7 +30,6 @@ class MainActivity : AppCompatActivity() {
 
         prefs = getSharedPreferences("HADashboardPrefs", MODE_PRIVATE)
 
-        // Ensure we go to setup if not configured
         if (!prefs.getBoolean("setup_complete", false)) {
             val intent = Intent(this, SetupActivity::class.java)
             startActivity(intent)
@@ -37,7 +37,6 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Standard setup for Kiosk mode / Wake screen
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
@@ -57,7 +56,19 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webView)
         val splashView = findViewById<View>(R.id.splashLayout)
 
-        // Reset Setup on long click of the splash screen
+        // --- NEW: Handle Back Button for WebView Navigation ---
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (webView.canGoBack()) {
+                    webView.goBack() // Go back in web history
+                } else {
+                    // If no history, allow the system to handle it (exit app)
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
+
         splashView.setOnLongClickListener {
             prefs.edit().putBoolean("setup_complete", false).apply()
             startActivity(Intent(this, SetupActivity::class.java))
@@ -80,17 +91,13 @@ class MainActivity : AppCompatActivity() {
         setupWebView()
         webView.loadUrl(url)
 
-        // UPDATED: Default is TRUE because Toggle OFF in Setup = ESPHome
         val useEsphome = prefs.getBoolean("use_esphome", true)
 
         if (useEsphome) {
             Log.d("DASHBOARD", "Starting ESPHome Discovery & API Engine...")
-
-            // Start mDNS Discovery so it shows up in HA
             esphomeDiscovery = EsphomeDiscovery(this)
             esphomeDiscovery?.broadcastDevice()
 
-            // Start the ESPHome API Service
             val apiIntent = Intent(this, EsphomeApiService::class.java)
             startService(apiIntent)
         } else {
@@ -111,7 +118,7 @@ class MainActivity : AppCompatActivity() {
     private fun setupWebView() {
         webView.webViewClient = object : WebViewClient() {
             override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
-                handler?.proceed() // Allow local self-signed certs
+                handler?.proceed()
             }
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
                 if (request?.isForMainFrame == true) {
@@ -131,7 +138,6 @@ class MainActivity : AppCompatActivity() {
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             useWideViewPort = true
             loadWithOverviewMode = true
-            // Clean up User Agent to prevent HA login issues
             userAgentString = userAgentString.replace("wv", "")
         }
 
@@ -167,7 +173,6 @@ class MainActivity : AppCompatActivity() {
             Log.d("MainActivity", "Received Action: $action")
 
             when (action) {
-                // Supports both ESPHome ("RELOAD_URL") and MQTT ("RELOAD") formats
                 "RELOAD_URL", "RELOAD" -> {
                     Log.d("MainActivity", "Reloading Dashboard...")
                     webView.reload()
@@ -226,7 +231,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        // Stop discovery so it doesn't linger in HA sidebar after app closes
         esphomeDiscovery?.stopBroadcast()
         stopService(Intent(this, EsphomeApiService::class.java))
         stopService(Intent(this, MqttService::class.java))
