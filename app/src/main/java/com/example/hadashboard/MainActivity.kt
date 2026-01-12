@@ -132,6 +132,11 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
+            // Apply zoom once the page finishes loading
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                applyCssZoom()
+            }
         }
 
         webView.settings.apply {
@@ -145,6 +150,102 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.setBackgroundColor(0)
+    }
+
+    private fun applyCssZoom() {
+        val scale = prefs.getInt("web_scale", 100)
+        val zoomFactor = scale / 100.0
+        // Inject JS to scale the entire body
+        webView.evaluateJavascript("document.body.style.zoom = '$zoomFactor';", null)
+    }
+
+    private val commandReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val action = intent?.getStringExtra("action")
+            Log.d("MainActivity", "Received Action: $action")
+
+            when (action) {
+                "RELOAD_URL", "RELOAD" -> webView.reload()
+                "SCREEN_ON" -> turnScreenOn()
+                "SCREEN_OFF" -> turnScreenOff()
+                "SET_BRIGHTNESS" -> {
+                    val value = intent.getIntExtra("value", 128)
+                    setSystemBrightness(value)
+                }
+                "ZOOM_IN" -> adjustZoom(10)
+                "ZOOM_OUT" -> adjustZoom(-10)
+                "LOCK_APP" -> {
+                    try {
+                        startLockTask()
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Lock Task failed: ${e.message}")
+                    }
+                }
+                "UNLOCK_APP" -> {
+                    try {
+                        stopLockTask()
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Unlock Task failed: ${e.message}")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun adjustZoom(delta: Int) {
+        var currentScale = prefs.getInt("web_scale", 100)
+        currentScale += delta
+
+        if (currentScale < 30) currentScale = 30
+        if (currentScale > 300) currentScale = 300
+
+        prefs.edit().putInt("web_scale", currentScale).apply()
+
+        webView.post {
+            applyCssZoom()
+        }
+    }
+
+    private fun setSystemBrightness(value: Int) {
+        if (Settings.System.canWrite(this)) {
+            try {
+                Settings.System.putInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, value)
+                val lp = window.attributes
+                lp.screenBrightness = value / 255.0f
+                window.attributes = lp
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Brightness Error: ${e.message}")
+            }
+        }
+    }
+
+    private fun turnScreenOn() {
+        val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+            km.requestDismissKeyguard(this@MainActivity, null)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        hideSystemUI()
+    }
+
+    private fun turnScreenOff() {
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val adminComponent = ComponentName(this, MyDeviceAdminReceiver::class.java)
+        if (dpm.isAdminActive(adminComponent)) {
+            try {
+                dpm.lockNow()
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Lock failed: ${e.message}")
+            }
+        }
     }
 
     private fun hideSystemUI() {
@@ -170,84 +271,6 @@ class MainActivity : AppCompatActivity() {
         if (hasFocus) hideSystemUI()
     }
 
-    private val commandReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            val action = intent?.getStringExtra("action")
-            Log.d("MainActivity", "Received Action: $action")
-
-            when (action) {
-                "RELOAD_URL", "RELOAD" -> webView.reload()
-                "SCREEN_ON" -> turnScreenOn()
-                "SCREEN_OFF" -> turnScreenOff()
-                "SET_BRIGHTNESS" -> {
-                    val value = intent.getIntExtra("value", 128)
-                    setSystemBrightness(value)
-                }
-                "LOCK_APP" -> {
-                    try {
-                        startLockTask()
-                        Toast.makeText(this@MainActivity, "Kiosk Mode Active", Toast.LENGTH_SHORT).show()
-                    } catch (e: Exception) {
-                        Log.e("MainActivity", "Lock Task failed: ${e.message}")
-                    }
-                }
-                "UNLOCK_APP" -> {
-                    try {
-                        stopLockTask()
-                        Toast.makeText(this@MainActivity, "Kiosk Mode Disabled", Toast.LENGTH_SHORT).show()
-                    } catch (e: Exception) {
-                        Log.e("MainActivity", "Unlock Task failed: ${e.message}")
-                    }
-                }
-            }
-        }
-    }
-
-    private fun setSystemBrightness(value: Int) {
-        if (Settings.System.canWrite(this)) {
-            try {
-                Settings.System.putInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, value)
-                val lp = window.attributes
-                lp.screenBrightness = value / 255.0f
-                window.attributes = lp
-            } catch (e: Exception) {
-                Log.e("MainActivity", "Brightness Error: ${e.message}")
-            }
-        }
-    }
-
-    private fun turnScreenOn() {
-        val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            setShowWhenLocked(true)
-            setTurnScreenOn(true)
-            // Fix: Request the keyguard to dismiss so the dashboard shows immediately
-            km.requestDismissKeyguard(this@MainActivity, null)
-        } else {
-            @Suppress("DEPRECATION")
-            window.addFlags(WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
-                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        }
-        hideSystemUI()
-    }
-
-    private fun turnScreenOff() {
-        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-        val adminComponent = ComponentName(this, MyDeviceAdminReceiver::class.java)
-        if (dpm.isAdminActive(adminComponent)) {
-            try {
-                dpm.lockNow()
-            } catch (e: Exception) {
-                Log.e("MainActivity", "Lock failed: ${e.message}")
-            }
-        } else {
-            Toast.makeText(this, "Admin permission required to lock screen", Toast.LENGTH_SHORT).show()
-        }
-    }
-
     override fun onDestroy() {
         esphomeDiscovery?.stopBroadcast()
         stopService(Intent(this, EsphomeApiService::class.java))
@@ -262,13 +285,8 @@ class MainActivity : AppCompatActivity() {
         if (!dpm.isAdminActive(adminComponent)) {
             val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
             intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
-            intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Dashboard needs this to turn off the screen.")
-            startActivityForResult(intent, ADMIN_INTENT_REQUEST_CODE)
+            startActivity(intent)
         }
-        checkBrightnessPermission()
-    }
-
-    private fun checkBrightnessPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.System.canWrite(this)) {
             val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS)
             intent.data = Uri.parse("package:$packageName")

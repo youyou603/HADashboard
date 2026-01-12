@@ -33,7 +33,9 @@ class EsphomeApiService : Service() {
     private val RAM_KEY = 203
     private val UPTIME_KEY = 204
     private val RELOAD_KEY = 205
-    private val KIOSK_KEY = 206 // NEW: Key for Kiosk Mode
+    private val KIOSK_KEY = 206
+    private val ZOOM_IN_KEY = 207  // NEW: Key for Zoom In
+    private val ZOOM_OUT_KEY = 208 // NEW: Key for Zoom Out
 
     data class SocketOutputStreamPair(val socket: Socket, val output: OutputStream)
 
@@ -118,7 +120,6 @@ class EsphomeApiService : Service() {
                             sendFrame(output, 17, ListEntitiesSwitchResponse.newBuilder()
                                 .setObjectId("tablet_screen").setKey(SCREEN_KEY).setName("Screen").build().toByteArray())
 
-                            // NEW: Add Kiosk Switch to Entity List
                             sendFrame(output, 17, ListEntitiesSwitchResponse.newBuilder()
                                 .setObjectId("kiosk_mode").setKey(KIOSK_KEY).setName("Kiosk Mode")
                                 .setIcon("mdi:lock").build().toByteArray())
@@ -151,6 +152,16 @@ class EsphomeApiService : Service() {
                                 .setObjectId("tablet_reload").setKey(RELOAD_KEY).setName("Reload Dashboard")
                                 .setIcon("mdi:refresh").build().toByteArray())
 
+                            // NEW: Add Zoom In Button
+                            sendFrame(output, 61, ListEntitiesButtonResponse.newBuilder()
+                                .setObjectId("tablet_zoom_in").setKey(ZOOM_IN_KEY).setName("Zoom In")
+                                .setIcon("mdi:magnify-plus").build().toByteArray())
+
+                            // NEW: Add Zoom Out Button
+                            sendFrame(output, 61, ListEntitiesButtonResponse.newBuilder()
+                                .setObjectId("tablet_zoom_out").setKey(ZOOM_OUT_KEY).setName("Zoom Out")
+                                .setIcon("mdi:magnify-minus").build().toByteArray())
+
                             sendFrame(output, 19, ListEntitiesDoneResponse.newBuilder().build().toByteArray())
                         }
                         20 -> sendAllStates(output)
@@ -158,7 +169,6 @@ class EsphomeApiService : Service() {
                             val cmd = SwitchCommandRequest.parseFrom(payload)
 
                             if (cmd.key == KIOSK_KEY) {
-                                // NEW: Handle Kiosk Mode toggle
                                 val action = if (cmd.state) "LOCK_APP" else "UNLOCK_APP"
                                 sendBroadcast(Intent("DASHBOARD_COMMAND").putExtra("action", action))
                             } else if (cmd.key == SCREEN_KEY) {
@@ -184,8 +194,10 @@ class EsphomeApiService : Service() {
                         }
                         62 -> { // ButtonCommandRequest
                             val cmd = ButtonCommandRequest.parseFrom(payload)
-                            if (cmd.key == RELOAD_KEY) {
-                                sendBroadcast(Intent("DASHBOARD_COMMAND").putExtra("action", "RELOAD_URL"))
+                            when (cmd.key) {
+                                RELOAD_KEY -> sendBroadcast(Intent("DASHBOARD_COMMAND").putExtra("action", "RELOAD_URL"))
+                                ZOOM_IN_KEY -> sendBroadcast(Intent("DASHBOARD_COMMAND").putExtra("action", "ZOOM_IN"))
+                                ZOOM_OUT_KEY -> sendBroadcast(Intent("DASHBOARD_COMMAND").putExtra("action", "ZOOM_OUT"))
                             }
                         }
                     }
@@ -202,7 +214,6 @@ class EsphomeApiService : Service() {
         try {
             sendFrame(output, 26, SwitchStateResponse.newBuilder().setKey(SCREEN_KEY).setState(true).build().toByteArray())
 
-            // Check if Kiosk Mode is currently active
             val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
             val isKioskActive = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
                 am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
