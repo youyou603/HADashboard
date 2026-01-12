@@ -14,7 +14,7 @@ import android.view.WindowManager
 import android.webkit.*
 import android.net.http.SslError
 import android.widget.*
-import androidx.activity.OnBackPressedCallback // Added this import
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 
@@ -28,15 +28,14 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // 1. Load layout immediately so Splash Screen is the first thing seen
+        setContentView(R.layout.activity_main)
+
         prefs = getSharedPreferences("HADashboardPrefs", MODE_PRIVATE)
+        webView = findViewById(R.id.webView)
+        val splashView = findViewById<View>(R.id.splashLayout)
 
-        if (!prefs.getBoolean("setup_complete", false)) {
-            val intent = Intent(this, SetupActivity::class.java)
-            startActivity(intent)
-            finish()
-            return
-        }
-
+        // Standard setup for Kiosk mode / Wake screen
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
@@ -47,43 +46,47 @@ class MainActivity : AppCompatActivity() {
                     WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD)
         }
 
-        setContentView(R.layout.activity_main)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         hideSystemUI()
 
-        checkAndRequestPermissions()
+        // 2. Run the Splash Animation sequence
+        Handler(Looper.getMainLooper()).postDelayed({
+            splashView.animate().alpha(0f).setDuration(1000).withEndAction {
+                splashView.visibility = View.GONE
 
-        webView = findViewById(R.id.webView)
-        val splashView = findViewById<View>(R.id.splashLayout)
+                // 3. AFTER splash disappears, decide where to go
+                if (!prefs.getBoolean("setup_complete", false)) {
+                    val intent = Intent(this@MainActivity, SetupActivity::class.java)
+                    startActivity(intent)
+                    finish()
+                } else {
+                    val url = prefs.getString("url", "http://homeassistant.local:8123")!!
+                    startDashboard(url)
+                    checkAndRequestPermissions()
+                }
+            }
+        }, 2000)
 
-        // --- NEW: Handle Back Button for WebView Navigation ---
+        // Handle Back Button for WebView Navigation
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (webView.canGoBack()) {
-                    webView.goBack() // Go back in web history
+                    webView.goBack()
                 } else {
-                    // If no history, allow the system to handle it (exit app)
                     isEnabled = false
                     onBackPressedDispatcher.onBackPressed()
                 }
             }
         })
 
+        // Reset Setup on long click (and Emergency Unlock)
         splashView.setOnLongClickListener {
+            try { stopLockTask() } catch (e: Exception) {} // Unlock if stuck
             prefs.edit().putBoolean("setup_complete", false).apply()
             startActivity(Intent(this, SetupActivity::class.java))
             finish()
             true
         }
-
-        Handler(Looper.getMainLooper()).postDelayed({
-            splashView.animate().alpha(0f).setDuration(1000).withEndAction {
-                splashView.visibility = View.GONE
-            }
-        }, 2000)
-
-        val url = prefs.getString("url", "http://homeassistant.local:8123")!!
-        startDashboard(url)
     }
 
     private fun startDashboard(url: String) {
@@ -173,15 +176,28 @@ class MainActivity : AppCompatActivity() {
             Log.d("MainActivity", "Received Action: $action")
 
             when (action) {
-                "RELOAD_URL", "RELOAD" -> {
-                    Log.d("MainActivity", "Reloading Dashboard...")
-                    webView.reload()
-                }
+                "RELOAD_URL", "RELOAD" -> webView.reload()
                 "SCREEN_ON" -> turnScreenOn()
                 "SCREEN_OFF" -> turnScreenOff()
                 "SET_BRIGHTNESS" -> {
                     val value = intent.getIntExtra("value", 128)
                     setSystemBrightness(value)
+                }
+                "LOCK_APP" -> {
+                    try {
+                        startLockTask()
+                        Toast.makeText(this@MainActivity, "Kiosk Mode Active", Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Lock Task failed: ${e.message}")
+                    }
+                }
+                "UNLOCK_APP" -> {
+                    try {
+                        stopLockTask()
+                        Toast.makeText(this@MainActivity, "Kiosk Mode Disabled", Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Unlock Task failed: ${e.message}")
+                    }
                 }
             }
         }
@@ -201,10 +217,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun turnScreenOn() {
+        val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
-            val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+            // Fix: Request the keyguard to dismiss so the dashboard shows immediately
             km.requestDismissKeyguard(this@MainActivity, null)
         } else {
             @Suppress("DEPRECATION")

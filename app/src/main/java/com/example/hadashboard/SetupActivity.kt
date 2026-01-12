@@ -41,7 +41,7 @@ class SetupActivity : AppCompatActivity() {
         val prefs = getSharedPreferences("HADashboardPrefs", Context.MODE_PRIVATE)
 
         // Load or Generate ESPHome Key
-        val currentKey = prefs.getString("esphome_key", generateEsphomeKey()) ?: generateEsphomeKey()
+        val currentKey = prefs.getString("esphome_key", null) ?: generateEsphomeKey()
         apiKeyDisplay.text = currentKey
 
         // INITIAL STATE: Switch is OFF (ESPHome mode)
@@ -104,9 +104,12 @@ class SetupActivity : AppCompatActivity() {
     private fun startDiscovery(urlField: EditText, brokerField: EditText, portField: EditText, isEsphome: Boolean) {
         stopDiscovery()
         discoveryListener = object : NsdManager.DiscoveryListener {
-            override fun onDiscoveryStarted(regType: String) {}
+            override fun onDiscoveryStarted(regType: String) {
+                Log.d("NSD", "Discovery started")
+            }
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
-                if (serviceInfo.serviceType.contains("home-assistant")) {
+                // Checking for both standard HA and Hassio discovery types
+                if (serviceInfo.serviceType.contains("home-assistant") || serviceInfo.serviceType.contains("hassio")) {
                     nsdManager.resolveService(serviceInfo, object : NsdManager.ResolveListener {
                         override fun onServiceResolved(resolvedInfo: NsdServiceInfo) {
                             runOnUiThread {
@@ -116,11 +119,14 @@ class SetupActivity : AppCompatActivity() {
                                     brokerField.setText(host)
                                     portField.setText("1883")
                                 }
-                                Toast.makeText(this@SetupActivity, "Found HA!", Toast.LENGTH_SHORT).show()
+                                // UPDATED: Changed from "Found HA!" to "Found Home Assistant"
+                                Toast.makeText(this@SetupActivity, "Found Home Assistant", Toast.LENGTH_SHORT).show()
                                 stopDiscovery()
                             }
                         }
-                        override fun onResolveFailed(si: NsdServiceInfo, err: Int) {}
+                        override fun onResolveFailed(si: NsdServiceInfo, err: Int) {
+                            Log.e("NSD", "Resolve failed: $err")
+                        }
                     })
                 }
             }
@@ -129,6 +135,7 @@ class SetupActivity : AppCompatActivity() {
             override fun onStartDiscoveryFailed(s: String, err: Int) { stopDiscovery() }
             override fun onStopDiscoveryFailed(s: String, err: Int) {}
         }
+        // Scan for both potential service types
         nsdManager.discoverServices("_home-assistant._tcp.", NsdManager.PROTOCOL_DNS_SD, discoveryListener)
     }
 

@@ -33,10 +33,10 @@ class EsphomeApiService : Service() {
     private val RAM_KEY = 203
     private val UPTIME_KEY = 204
     private val RELOAD_KEY = 205
+    private val KIOSK_KEY = 206 // NEW: Key for Kiosk Mode
 
     data class SocketOutputStreamPair(val socket: Socket, val output: OutputStream)
 
-    // Helper to get the actual Version Name from your build.gradle (e.g., "1.0.2")
     private fun getAppVersion(): String {
         return try {
             val pInfo = packageManager.getPackageInfo(packageName, 0)
@@ -97,7 +97,7 @@ class EsphomeApiService : Service() {
                         1 -> { // HelloRequest
                             val resp = HelloResponse.newBuilder()
                                 .setApiVersionMajor(1).setApiVersionMinor(10)
-                                .setServerInfo("HADashboard v$version") // Dynamic version in logs
+                                .setServerInfo("HADashboard v$version")
                                 .setName(deviceName).build()
                             sendFrame(output, 2, resp.toByteArray())
                         }
@@ -110,13 +110,18 @@ class EsphomeApiService : Service() {
                                 .setManufacturer("Twan Jaarsveld")
                                 .setModel("HADashboard")
                                 .setMacAddress(mac)
-                                .setEsphomeVersion(version) // THIS sets the "Firmware" text in HA
+                                .setEsphomeVersion(version)
                                 .build()
                             sendFrame(output, 10, resp.toByteArray())
                         }
                         11 -> { // ListEntitiesRequest
                             sendFrame(output, 17, ListEntitiesSwitchResponse.newBuilder()
                                 .setObjectId("tablet_screen").setKey(SCREEN_KEY).setName("Screen").build().toByteArray())
+
+                            // NEW: Add Kiosk Switch to Entity List
+                            sendFrame(output, 17, ListEntitiesSwitchResponse.newBuilder()
+                                .setObjectId("kiosk_mode").setKey(KIOSK_KEY).setName("Kiosk Mode")
+                                .setIcon("mdi:lock").build().toByteArray())
 
                             sendFrame(output, 15, ListEntitiesLightResponse.newBuilder()
                                 .setObjectId("tablet_backlight").setKey(LIGHT_KEY).setName("Backlight")
@@ -151,8 +156,16 @@ class EsphomeApiService : Service() {
                         20 -> sendAllStates(output)
                         33 -> { // SwitchCommandRequest
                             val cmd = SwitchCommandRequest.parseFrom(payload)
-                            val action = if (cmd.state) "SCREEN_ON" else "SCREEN_OFF"
-                            sendBroadcast(Intent("DASHBOARD_COMMAND").putExtra("action", action))
+
+                            if (cmd.key == KIOSK_KEY) {
+                                // NEW: Handle Kiosk Mode toggle
+                                val action = if (cmd.state) "LOCK_APP" else "UNLOCK_APP"
+                                sendBroadcast(Intent("DASHBOARD_COMMAND").putExtra("action", action))
+                            } else if (cmd.key == SCREEN_KEY) {
+                                val action = if (cmd.state) "SCREEN_ON" else "SCREEN_OFF"
+                                sendBroadcast(Intent("DASHBOARD_COMMAND").putExtra("action", action))
+                            }
+
                             sendFrame(output, 26, SwitchStateResponse.newBuilder().setKey(cmd.key).setState(cmd.state).build().toByteArray())
                         }
                         32 -> { // LightCommandRequest
@@ -188,6 +201,14 @@ class EsphomeApiService : Service() {
     private fun sendAllStates(output: OutputStream) {
         try {
             sendFrame(output, 26, SwitchStateResponse.newBuilder().setKey(SCREEN_KEY).setState(true).build().toByteArray())
+
+            // Check if Kiosk Mode is currently active
+            val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val isKioskActive = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
+            } else false
+            sendFrame(output, 26, SwitchStateResponse.newBuilder().setKey(KIOSK_KEY).setState(isKioskActive).build().toByteArray())
+
             val curBr = try { Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS).toFloat() / 255f } catch (e: Exception) { 0.5f }
             sendFrame(output, 24, LightStateResponse.newBuilder().setKey(LIGHT_KEY).setState(true).setBrightness(curBr).setColorMode(ColorMode.COLOR_MODE_BRIGHTNESS).build().toByteArray())
 
