@@ -5,6 +5,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.AudioManager
+import android.media.MediaPlayer
+import android.net.Uri
 import android.os.BatteryManager
 import android.os.Environment
 import android.os.IBinder
@@ -26,6 +30,10 @@ class EsphomeApiService : Service() {
     private var isRunning = true
     private val activeClients = Collections.synchronizedList(mutableListOf<SocketOutputStreamPair>())
 
+    // Internal Media Player for actual playback
+    private var internalMediaPlayer: MediaPlayer? = null
+
+    // Entity Keys
     private val SCREEN_KEY = 101
     private val LIGHT_KEY = 200
     private val BATT_KEY = 201
@@ -34,8 +42,9 @@ class EsphomeApiService : Service() {
     private val UPTIME_KEY = 204
     private val RELOAD_KEY = 205
     private val KIOSK_KEY = 206
-    private val ZOOM_IN_KEY = 207  // NEW: Key for Zoom In
-    private val ZOOM_OUT_KEY = 208 // NEW: Key for Zoom Out
+    private val ZOOM_IN_KEY = 207
+    private val ZOOM_OUT_KEY = 208
+    private val MEDIA_PLAYER_KEY = 300
 
     data class SocketOutputStreamPair(val socket: Socket, val output: OutputStream)
 
@@ -117,6 +126,7 @@ class EsphomeApiService : Service() {
                             sendFrame(output, 10, resp.toByteArray())
                         }
                         11 -> { // ListEntitiesRequest
+                            // Switches
                             sendFrame(output, 17, ListEntitiesSwitchResponse.newBuilder()
                                 .setObjectId("tablet_screen").setKey(SCREEN_KEY).setName("Screen").build().toByteArray())
 
@@ -124,10 +134,12 @@ class EsphomeApiService : Service() {
                                 .setObjectId("kiosk_mode").setKey(KIOSK_KEY).setName("Kiosk Mode")
                                 .setIcon("mdi:lock").build().toByteArray())
 
+                            // Light (Backlight)
                             sendFrame(output, 15, ListEntitiesLightResponse.newBuilder()
                                 .setObjectId("tablet_backlight").setKey(LIGHT_KEY).setName("Backlight")
                                 .addSupportedColorModes(ColorMode.COLOR_MODE_BRIGHTNESS).build().toByteArray())
 
+                            // Sensors
                             sendFrame(output, 16, ListEntitiesSensorResponse.newBuilder()
                                 .setObjectId("tablet_battery").setKey(BATT_KEY).setName("Battery")
                                 .setUnitOfMeasurement("%").setDeviceClass("battery")
@@ -148,26 +160,33 @@ class EsphomeApiService : Service() {
                                 .setUnitOfMeasurement("min").setIcon("mdi:timer-outline")
                                 .setAccuracyDecimals(0).build().toByteArray())
 
+                            // Buttons
                             sendFrame(output, 61, ListEntitiesButtonResponse.newBuilder()
                                 .setObjectId("tablet_reload").setKey(RELOAD_KEY).setName("Reload Dashboard")
                                 .setIcon("mdi:refresh").build().toByteArray())
 
-                            // NEW: Add Zoom In Button
                             sendFrame(output, 61, ListEntitiesButtonResponse.newBuilder()
                                 .setObjectId("tablet_zoom_in").setKey(ZOOM_IN_KEY).setName("Zoom In")
                                 .setIcon("mdi:magnify-plus").build().toByteArray())
 
-                            // NEW: Add Zoom Out Button
                             sendFrame(output, 61, ListEntitiesButtonResponse.newBuilder()
                                 .setObjectId("tablet_zoom_out").setKey(ZOOM_OUT_KEY).setName("Zoom Out")
                                 .setIcon("mdi:magnify-minus").build().toByteArray())
+
+                            // Media Player (Dynamic Name)
+                            sendFrame(output, 63, ListEntitiesMediaPlayerResponse.newBuilder()
+                                .setObjectId("tablet_media")
+                                .setKey(MEDIA_PLAYER_KEY)
+                                .setName("$deviceName Speaker")
+                                .setSupportsPause(true)
+                                .setFeatureFlags(1 + 2 + 4 + 8) // Play, Pause, Stop, Vol
+                                .build().toByteArray())
 
                             sendFrame(output, 19, ListEntitiesDoneResponse.newBuilder().build().toByteArray())
                         }
                         20 -> sendAllStates(output)
                         33 -> { // SwitchCommandRequest
                             val cmd = SwitchCommandRequest.parseFrom(payload)
-
                             if (cmd.key == KIOSK_KEY) {
                                 val action = if (cmd.state) "LOCK_APP" else "UNLOCK_APP"
                                 sendBroadcast(Intent("DASHBOARD_COMMAND").putExtra("action", action))
@@ -175,7 +194,6 @@ class EsphomeApiService : Service() {
                                 val action = if (cmd.state) "SCREEN_ON" else "SCREEN_OFF"
                                 sendBroadcast(Intent("DASHBOARD_COMMAND").putExtra("action", action))
                             }
-
                             sendFrame(output, 26, SwitchStateResponse.newBuilder().setKey(cmd.key).setState(cmd.state).build().toByteArray())
                         }
                         32 -> { // LightCommandRequest
@@ -200,6 +218,39 @@ class EsphomeApiService : Service() {
                                 ZOOM_OUT_KEY -> sendBroadcast(Intent("DASHBOARD_COMMAND").putExtra("action", "ZOOM_OUT"))
                             }
                         }
+                        65 -> { // MediaPlayerCommandRequest
+                            val cmd = MediaPlayerCommandRequest.parseFrom(payload)
+                            if (cmd.key == MEDIA_PLAYER_KEY) {
+
+                                // 1. HANDLE URL PLAYBACK (TTS / Streams)
+                                if (cmd.hasMediaUrl && cmd.mediaUrl.isNotEmpty()) {
+                                    playMediaUrl(cmd.mediaUrl)
+                                }
+
+                                // 2. HANDLE TRANSPORT COMMANDS
+                                if (cmd.hasCommand) {
+                                    when (cmd.command) {
+                                        MediaPlayerCommand.MEDIA_PLAYER_COMMAND_PLAY -> internalMediaPlayer?.start()
+                                        MediaPlayerCommand.MEDIA_PLAYER_COMMAND_PAUSE -> internalMediaPlayer?.pause()
+                                        MediaPlayerCommand.MEDIA_PLAYER_COMMAND_STOP -> {
+                                            internalMediaPlayer?.stop()
+                                            internalMediaPlayer?.reset()
+                                        }
+                                        else -> {}
+                                    }
+                                }
+
+                                // 3. HANDLE VOLUME (Direct System Control)
+                                if (cmd.hasVolume) {
+                                    val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                                    val maxVol = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                                    am.setStreamVolume(AudioManager.STREAM_MUSIC, (maxVol * cmd.volume).toInt(), 0)
+                                }
+
+                                // Send feedback state immediately
+                                sendMediaState(output)
+                            }
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -208,6 +259,49 @@ class EsphomeApiService : Service() {
                 activeClients.removeAll { it.socket == socket }
             }
         }
+    }
+
+    private fun playMediaUrl(url: String) {
+        try {
+            internalMediaPlayer?.stop()
+            internalMediaPlayer?.release()
+
+            internalMediaPlayer = MediaPlayer().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .build()
+                )
+                setDataSource(applicationContext, Uri.parse(url))
+                prepareAsync()
+                setOnPreparedListener { start() }
+                setOnCompletionListener {
+                    it.reset()
+                    // Optional: Send state update when finished
+                }
+                setOnErrorListener { _, _, _ -> true }
+            }
+        } catch (e: Exception) {
+            Log.e("ESPHomeAPI", "Playback error: ${e.message}")
+        }
+    }
+
+    private fun sendMediaState(output: OutputStream) {
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val vol = am.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / am.getStreamMaxVolume(AudioManager.STREAM_MUSIC).toFloat()
+
+        val state = if (internalMediaPlayer?.isPlaying == true) {
+            MediaPlayerState.MEDIA_PLAYER_STATE_PLAYING
+        } else {
+            MediaPlayerState.MEDIA_PLAYER_STATE_IDLE
+        }
+
+        sendFrame(output, 64, MediaPlayerStateResponse.newBuilder()
+            .setKey(MEDIA_PLAYER_KEY)
+            .setState(state)
+            .setVolume(vol)
+            .build().toByteArray())
     }
 
     private fun sendAllStates(output: OutputStream) {
@@ -237,6 +331,10 @@ class EsphomeApiService : Service() {
 
             val uptimeMinutes = (SystemClock.elapsedRealtime().toFloat() / 60000f)
             sendFrame(output, 25, SensorStateResponse.newBuilder().setKey(UPTIME_KEY).setState(round(uptimeMinutes)).build().toByteArray())
+
+            // Media Player State (ID 64)
+            sendMediaState(output)
+
         } catch (e: Exception) { }
     }
 
@@ -292,6 +390,7 @@ class EsphomeApiService : Service() {
 
     override fun onDestroy() {
         isRunning = false
+        internalMediaPlayer?.release()
         serverSocket?.close()
         super.onDestroy()
     }
